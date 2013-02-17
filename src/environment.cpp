@@ -804,7 +804,8 @@ void ServerEnvironment::activateBlock(MapBlock *block, u32 additional_dtime)
 				i = elapsed_timers.begin();
 				i != elapsed_timers.end(); i++){
 			n = block->getNodeNoEx(i->first);
-			if(scriptapi_node_on_timer(m_lua,i->first,n,i->second.elapsed))
+			v3s16 p = i->first + block->getPosRelative();
+			if(scriptapi_node_on_timer(m_lua,p,n,i->second.elapsed))
 				block->setNodeTimer(i->first,NodeTimer(i->second.timeout,0));
 		}
 	}
@@ -817,6 +818,45 @@ void ServerEnvironment::activateBlock(MapBlock *block, u32 additional_dtime)
 void ServerEnvironment::addActiveBlockModifier(ActiveBlockModifier *abm)
 {
 	m_abms.push_back(ABMWithState(abm));
+}
+
+bool ServerEnvironment::setNode(v3s16 p, const MapNode &n)
+{
+	INodeDefManager *ndef = m_gamedef->ndef();
+	MapNode n_old = m_map->getNodeNoEx(p);
+	// Call destructor
+	if(ndef->get(n_old).has_on_destruct)
+		scriptapi_node_on_destruct(m_lua, p, n_old);
+	// Replace node
+	bool succeeded = m_map->addNodeWithEvent(p, n);
+	if(!succeeded)
+		return false;
+	// Call post-destructor
+	if(ndef->get(n_old).has_after_destruct)
+		scriptapi_node_after_destruct(m_lua, p, n_old);
+	// Call constructor
+	if(ndef->get(n).has_on_construct)
+		scriptapi_node_on_construct(m_lua, p, n);
+	return true;
+}
+
+bool ServerEnvironment::removeNode(v3s16 p)
+{
+	INodeDefManager *ndef = m_gamedef->ndef();
+	MapNode n_old = m_map->getNodeNoEx(p);
+	// Call destructor
+	if(ndef->get(n_old).has_on_destruct)
+		scriptapi_node_on_destruct(m_lua, p, n_old);
+	// Replace with air
+	// This is slightly optimized compared to addNodeWithEvent(air)
+	bool succeeded = m_map->removeNodeWithEvent(p);
+	if(!succeeded)
+		return false;
+	// Call post-destructor
+	if(ndef->get(n_old).has_after_destruct)
+		scriptapi_node_after_destruct(m_lua, p, n_old);
+	// Air doesn't require constructor
+	return true;
 }
 
 std::set<u16> ServerEnvironment::getObjectsInsideRadius(v3f pos, float radius)
@@ -1261,6 +1301,7 @@ u16 ServerEnvironment::addActiveObject(ServerActiveObject *object)
 	return id;
 }
 
+#if 0
 bool ServerEnvironment::addActiveObjectAsStatic(ServerActiveObject *obj)
 {
 	assert(obj);
@@ -1303,6 +1344,7 @@ bool ServerEnvironment::addActiveObjectAsStatic(ServerActiveObject *obj)
 
 	return succeeded;
 }
+#endif
 
 /*
 	Finds out what new objects have been added to
@@ -1523,13 +1565,15 @@ void ServerEnvironment::removeRemovedObjects()
 		*/
 		if(obj->m_static_exists && obj->m_removed)
 		{
-			MapBlock *block = m_map->emergeBlock(obj->m_static_block);
-			if(block)
-			{
+			MapBlock *block = m_map->emergeBlock(obj->m_static_block, false);
+			if (block) {
 				block->m_static_objects.remove(id);
 				block->raiseModified(MOD_STATE_WRITE_NEEDED,
 						"removeRemovedObjects");
 				obj->m_static_exists = false;
+			} else {
+				infostream << "failed to emerge block from which "
+					"an object to be removed was loaded from. id="<<id<<std::endl;
 			}
 		}
 
@@ -1677,6 +1721,8 @@ void ServerEnvironment::activateObjects(MapBlock *block, u32 dtime_s)
 
 	If force_delete is set, active object is deleted nevertheless. It
 	shall only be set so in the destructor of the environment.
+
+	If block wasn't generated (not in memory or on disk), 
 */
 void ServerEnvironment::deactivateFarObjects(bool force_delete)
 {
@@ -2019,20 +2065,37 @@ void ClientEnvironment::step(float dtime)
 			{
 				// Gravity
 				v3f speed = lplayer->getSpeed();
-				if(lplayer->swimming_up == false)
-					speed.Y -= 9.81 * BS * dtime_part * 2;
+				if(lplayer->in_liquid == false)
+					speed.Y -= lplayer->movement_gravity * dtime_part * 2;
 
-				// Water resistance
-				if(lplayer->in_water_stable || lplayer->in_water)
+				// Liquid floating / sinking
+				if(lplayer->in_liquid && !lplayer->swimming_vertical)
+					speed.Y -= lplayer->movement_liquid_sink * dtime_part * 2;
+
+				// Liquid resistance
+				if(lplayer->in_liquid_stable || lplayer->in_liquid)
 				{
-					f32 max_down = 2.0*BS;
-					if(speed.Y < -max_down) speed.Y = -max_down;
+					// How much the node's viscosity blocks movement, ranges between 0 and 1
+					// Should match the scale at which viscosity increase affects other liquid attributes
+					const f32 viscosity_factor = 0.3;
 
-					f32 max = 2.5*BS;
-					if(speed.getLength() > max)
-					{
-						speed = speed / speed.getLength() * max;
-					}
+					v3f d_wanted = -speed / lplayer->movement_liquid_fluidity;
+					f32 dl = d_wanted.getLength();
+					if(dl > lplayer->movement_liquid_fluidity_smooth)
+						dl = lplayer->movement_liquid_fluidity_smooth;
+					dl *= (lplayer->liquid_viscosity * viscosity_factor) + (1 - viscosity_factor);
+					
+					v3f d = d_wanted.normalize() * dl;
+					speed += d;
+					
+#if 0 // old code
+					if(speed.X > lplayer->movement_liquid_fluidity + lplayer->movement_liquid_fluidity_smooth)	speed.X -= lplayer->movement_liquid_fluidity_smooth;
+					if(speed.X < -lplayer->movement_liquid_fluidity - lplayer->movement_liquid_fluidity_smooth)	speed.X += lplayer->movement_liquid_fluidity_smooth;
+					if(speed.Y > lplayer->movement_liquid_fluidity + lplayer->movement_liquid_fluidity_smooth)	speed.Y -= lplayer->movement_liquid_fluidity_smooth;
+					if(speed.Y < -lplayer->movement_liquid_fluidity - lplayer->movement_liquid_fluidity_smooth)	speed.Y += lplayer->movement_liquid_fluidity_smooth;
+					if(speed.Z > lplayer->movement_liquid_fluidity + lplayer->movement_liquid_fluidity_smooth)	speed.Z -= lplayer->movement_liquid_fluidity_smooth;
+					if(speed.Z < -lplayer->movement_liquid_fluidity - lplayer->movement_liquid_fluidity_smooth)	speed.Z += lplayer->movement_liquid_fluidity_smooth;
+#endif
 				}
 
 				lplayer->setSpeed(speed);
