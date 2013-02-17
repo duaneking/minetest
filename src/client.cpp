@@ -1514,6 +1514,26 @@ void Client::ProcessData(u8 *data, u32 datasize, u16 sender_peer_id)
 			}
 		}
 	}
+	else if(command == TOCLIENT_MOVEMENT)
+	{
+		std::string datastring((char*)&data[2], datasize-2);
+		std::istringstream is(datastring, std::ios_base::binary);
+		Player *player = m_env.getLocalPlayer();
+		assert(player != NULL);
+
+		player->movement_acceleration_default = readF1000(is) * BS;
+		player->movement_acceleration_air = readF1000(is) * BS;
+		player->movement_acceleration_fast = readF1000(is) * BS;
+		player->movement_speed_walk = readF1000(is) * BS;
+		player->movement_speed_crouch = readF1000(is) * BS;
+		player->movement_speed_fast = readF1000(is) * BS;
+		player->movement_speed_climb = readF1000(is) * BS;
+		player->movement_speed_jump = readF1000(is) * BS;
+		player->movement_liquid_fluidity = readF1000(is) * BS;
+		player->movement_liquid_fluidity_smooth = readF1000(is) * BS;
+		player->movement_liquid_sink = readF1000(is) * BS;
+		player->movement_gravity = readF1000(is) * BS;
+	}
 	else if(command == TOCLIENT_HP)
 	{
 		std::string datastring((char*)&data[2], datasize-2);
@@ -1899,6 +1919,22 @@ void Client::ProcessData(u8 *data, u32 datasize, u16 sender_peer_id)
 			m_detached_inventories[name] = inv;
 		}
 		inv->deSerialize(is);
+	}
+	else if(command == TOCLIENT_SHOW_FORMSPEC)
+	{
+		std::string datastring((char*)&data[2], datasize-2);
+		std::istringstream is(datastring, std::ios_base::binary);
+
+		std::string formspec = deSerializeLongString(is);
+		std::string formname = deSerializeString(is);
+
+		ClientEvent event;
+		event.type = CE_SHOW_FORMSPEC;
+		// pointer is required as event is a struct only!
+		// adding a std:string to a struct isn't possible
+		event.show_formspec.formspec = new std::string(formspec);
+		event.show_formspec.formname = new std::string(formname);
+		m_client_event_queue.push_back(event);
 	}
 	else
 	{

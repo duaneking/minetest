@@ -12,7 +12,7 @@ set(VERSION_EXTRA "" CACHE STRING "Stuff to append to version string")
 # Also remember to set PROTOCOL_VERSION in clientserver.h when releasing
 set(VERSION_MAJOR 0)
 set(VERSION_MINOR 4)
-set(VERSION_PATCH 4)
+set(VERSION_PATCH 4-d1)
 if(VERSION_EXTRA)
 	set(VERSION_PATCH ${VERSION_PATCH}-${VERSION_EXTRA})
 endif()
@@ -147,6 +147,8 @@ if(RUN_IN_PLACE)
 	install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/mods/minetest/mods_here.txt" DESTINATION "${SHAREDIR}/mods/minetest")
 	install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/textures/all/textures_here.txt" DESTINATION "${SHAREDIR}/textures/all")
 endif()
+
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/fonts" DESTINATION "${SHAREDIR}")
 
 install(FILES "README.txt" DESTINATION "${DOCDIR}")
 install(FILES "doc/lua_api.txt" DESTINATION "${DOCDIR}")

@@ -68,9 +68,13 @@ with this program; if not, write to the Free Software Foundation, Inc.,
 #include "profiler.h"
 #include "log.h"
 #include "mods.h"
+#if USE_FREETYPE
+#include "xCGUITTFont.h"
+#endif
 #include "util/string.h"
 #include "subgame.h"
 #include "quicktune.h"
+#include "serverlist.h"
 
 /*
 	Settings.
@@ -766,11 +770,19 @@ int main(int argc, char *argv[])
 
 	log_register_thread("main");
 
-	// Set locale. This is for forcing '.' as the decimal point.
-	std::locale::global(std::locale("C"));
-	// This enables printing all characters in bitmap font
-	setlocale(LC_CTYPE, "en_US");
+	// This enables internatonal characters input
+	if( setlocale(LC_ALL, "") == NULL )
+	{
+		fprintf( stderr, "%s: warning: could not set default locale\n", argv[0] );
+	}
 
+	// Set locale. This is for forcing '.' as the decimal point.
+	try {
+		std::locale::global(std::locale(std::locale(""), "C", std::locale::numeric));
+		setlocale(LC_NUMERIC, "C");
+	} catch (const std::exception& ex) {
+		errorstream<<"Could not set numeric locale to C"<<std::endl;
+	}
 	/*
 		Parse command line
 	*/
@@ -874,7 +886,7 @@ int main(int argc, char *argv[])
 	// Create user data directory
 	fs::CreateDir(porting::path_user);
 
-	init_gettext((porting::path_share+DIR_DELIM+".."+DIR_DELIM+"locale").c_str());
+	init_gettext((porting::path_share + DIR_DELIM + "locale").c_str());
 	
 	// Initialize debug streams
 #define DEBUGFILE "debug.txt"
@@ -1328,7 +1340,13 @@ int main(int argc, char *argv[])
 
 	guienv = device->getGUIEnvironment();
 	gui::IGUISkin* skin = guienv->getSkin();
+	#if USE_FREETYPE
+	std::string font_path = g_settings->get("font_path");
+	u16 font_size = g_settings->getU16("font_size");
+	gui::IGUIFont *font = gui::CGUITTFont::createTTFont(guienv, font_path.c_str(), font_size);
+	#else
 	gui::IGUIFont* font = guienv->getFont(getTexturePath("fontlucida.png").c_str());
+	#endif
 	if(font)
 		skin->setFont(font);
 	else
@@ -1448,6 +1466,7 @@ int main(int argc, char *argv[])
 				menudata.trilinear_filter = g_settings->getBool("trilinear_filter");
 				menudata.enable_shaders = g_settings->getS32("enable_shaders");
 				menudata.preload_item_visuals = g_settings->getBool("preload_item_visuals");
+				menudata.enable_particles = g_settings->getBool("enable_particles");
 				driver->setTextureCreationFlag(video::ETCF_CREATE_MIP_MAPS, menudata.mip_map);
 				menudata.creative_mode = g_settings->getBool("creative_mode");
 				menudata.enable_damage = g_settings->getBool("enable_damage");
@@ -1570,6 +1589,7 @@ int main(int argc, char *argv[])
 
 				g_settings->setS32("enable_shaders", menudata.enable_shaders);
 				g_settings->set("preload_item_visuals", itos(menudata.preload_item_visuals));
+				g_settings->set("enable_particles", itos(menudata.enable_particles));
 
 				g_settings->set("creative_mode", itos(menudata.creative_mode));
 				g_settings->set("enable_damage", itos(menudata.enable_damage));
@@ -1579,7 +1599,7 @@ int main(int argc, char *argv[])
 				if(menudata.selected_world != -1)
 					g_settings->set("selected_world_path",
 							worldspecs[menudata.selected_world].path);
-				
+
 				// Break out of menu-game loop to shut down cleanly
 				if(device->run() == false || kill == true)
 					break;
@@ -1595,6 +1615,15 @@ int main(int argc, char *argv[])
 					current_password = "";
 					current_address = "";
 					current_port = 30011;
+				}
+				else if (address != "")
+				{
+					ServerListSpec server;
+					server.name = menudata.servername;
+					server.address = wide_to_narrow(menudata.address);
+					server.port = wide_to_narrow(menudata.port);
+					server.description = menudata.serverdescription;
+					ServerList::insert(server);
 				}
 				
 				// Set world path to selected one
